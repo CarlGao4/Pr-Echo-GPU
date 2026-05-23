@@ -460,9 +460,10 @@ static frame_echo::PixelRGBA ReadPixelRGBA(
     if (isPremiere)
     {
         // Premiere Pro: always float32 pixel data.
-        // Each pixel is 4 floats, use pixel index instead of byte offset.
+        // Each pixel is 4 floats, use rowbytes * height + x * 4 to calculate offset.
         const float* pixelBase = reinterpret_cast<const float*>(src->data);
-        const float* pixel = pixelBase + (static_cast<std::size_t>(y) * src->width + static_cast<std::size_t>(x)) * 4;
+        const size_t pixelOffset = static_cast<size_t>(y) * src->rowbytes / sizeof(float) + static_cast<size_t>(x) * 4;
+        const float* pixel = pixelBase + pixelOffset;
 
         if (isVUYA)
         {
@@ -481,7 +482,8 @@ static frame_echo::PixelRGBA ReadPixelRGBA(
     // After Effects (8-bit, no Smart Render):
     // PF_Pixel {alpha, red, green, blue} as unsigned char.
     const PF_Pixel* pixelBase = reinterpret_cast<const PF_Pixel*>(src->data);
-    const PF_Pixel& p = pixelBase[static_cast<std::size_t>(y) * src->width + static_cast<std::size_t>(x)];
+    const size_t pixelOffset = static_cast<size_t>(y) * src->rowbytes / sizeof(PF_Pixel) + static_cast<size_t>(x);
+    const PF_Pixel& p = pixelBase[pixelOffset];
     constexpr float kInv255 = 1.0f / 255.0f;
     return frame_echo::PixelRGBA{
         static_cast<float>(p.red) * kInv255,
@@ -503,9 +505,10 @@ static void WritePixelRGBA(
     if (isPremiere)
     {
         // Premiere Pro: always float32 pixel data.
-        // Each pixel is 4 floats, use pixel index instead of byte offset.
+        // Each pixel is 4 floats, use rowbytes * height + x * 4 to calculate offset.
         float* pixelBase = reinterpret_cast<float*>(dest->data);
-        float* outPixel = pixelBase + (static_cast<std::size_t>(y) * dest->width + static_cast<std::size_t>(x)) * 4;
+        const size_t pixelOffset = static_cast<size_t>(y) * dest->rowbytes / sizeof(float) + static_cast<size_t>(x) * 4;
+        float* outPixel = pixelBase + pixelOffset;
 
         if (isVUYA)
         {
@@ -530,7 +533,8 @@ static void WritePixelRGBA(
     // After Effects (8-bit, no Smart Render):
     // PF_Pixel {alpha, red, green, blue} as unsigned char.
     PF_Pixel* pixelBase = reinterpret_cast<PF_Pixel*>(dest->data);
-    PF_Pixel& p = pixelBase[static_cast<std::size_t>(y) * dest->width + static_cast<std::size_t>(x)];
+    size_t pixelOffset = static_cast<size_t>(y) * dest->rowbytes / sizeof(PF_Pixel) + static_cast<size_t>(x);
+    PF_Pixel& p = pixelBase[pixelOffset];
     constexpr float k255 = 255.0f;
     p.alpha = static_cast<A_u_char>(frame_echo::Clamp01(pixel.a) * k255 + 0.5f);
     p.red   = static_cast<A_u_char>(frame_echo::Clamp01(pixel.r) * k255 + 0.5f);

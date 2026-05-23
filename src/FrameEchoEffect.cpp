@@ -218,6 +218,8 @@ static PF_Err GlobalSetup(
         (*pixelFormatSuite->ClearSupportedPixelFormats)(in_data->effect_ref);
         (*pixelFormatSuite->AddSupportedPixelFormat)(in_data->effect_ref, PrPixelFormat_VUYA_4444_32f);
         (*pixelFormatSuite->AddSupportedPixelFormat)(in_data->effect_ref, PrPixelFormat_BGRA_4444_32f);
+        AEFX_SuiteScoper<PF_UtilitySuite13> utilitySuite(in_data, kPFUtilitySuite, kPFUtilitySuiteVersion13, out_data);
+        (*utilitySuite->EffectWantsCheckedOutFramesToMatchRenderPixelFormat)(in_data->effect_ref);
     }
 
     return PF_Err_NONE;
@@ -601,7 +603,10 @@ static void CheckoutFrame(
         return;
     }
 
-    if (PF_CHECKOUT_PARAM(in_data, FRAME_ECHO_INPUT, timeValue, in_data->time_step, in_data->time_scale, &frame.param) == PF_Err_NONE)
+    PF_Err err = PF_Err_NONE;
+
+    ERR(PF_CHECKOUT_PARAM(in_data, FRAME_ECHO_INPUT, timeValue, in_data->time_step, in_data->time_scale, &frame.param));
+    if (err == PF_Err_NONE)
     {
         frame.checkedOut = true;
         if (frame.param.u.ld.data)

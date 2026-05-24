@@ -84,7 +84,7 @@ static inline __m256 UnpremultiplySIMD_2(__m256 pixel)
     __m256 result = _mm256_mul_ps(pixel, cleanInv);
     result = _mm256_blend_ps(result, pixel, 0b10001000);
 
-    return Clamp01SIMD_2(result);
+    return result;
 }
 
 /// Over composite for two pixels: out = src + dst * (1 - src.a)
@@ -124,7 +124,6 @@ PixelRGBA_2 ComposeTwoSamplesAVX2(
             sum = _mm256_add_ps(sum, PremultiplySIMD_2(px, samples0[i].opacity));
         }
 
-        sum = Clamp01SIMD_2(sum);
         PixelRGBA_2 result;
         StoreTwoPixels(result, UnpremultiplySIMD_2(sum));
         return result;

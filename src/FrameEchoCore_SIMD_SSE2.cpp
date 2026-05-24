@@ -89,7 +89,7 @@ static inline __m128 UnpremultiplySIMD(__m128 pixel)
     __m128 result = _mm_mul_ps(pixel, invAlphaV);
     result = _mm_blend_ps(result, pixel, 0b1000);
 
-    return Clamp01SIMD(result);
+    return result;
 }
 
 /// Over composite: out = src + dst * (1 - src.a)
@@ -130,7 +130,6 @@ PixelRGBA ComposeSamples_SSE2(const std::vector<TemporalSample>& samples, BlendM
             sum = _mm_add_ps(sum, premul);
         }
 
-        sum = Clamp01SIMD(sum);
         PixelRGBA result;
         StorePixel(result, UnpremultiplySIMD(sum));
         return result;

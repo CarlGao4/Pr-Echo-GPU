@@ -180,9 +180,9 @@ PixelRGBA Unpremultiply(const PixelRGBA& pixel)
 
     const float inverseAlpha = 1.0f / pixel.a;
     return PixelRGBA{
-        Clamp01(pixel.r * inverseAlpha),
-        Clamp01(pixel.g * inverseAlpha),
-        Clamp01(pixel.b * inverseAlpha),
+        pixel.r * inverseAlpha,
+        pixel.g * inverseAlpha,
+        pixel.b * inverseAlpha,
         Clamp01(pixel.a),
     };
 }
@@ -235,10 +235,6 @@ PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode b
             sum.a += premultiplied.a;
         }
 
-        sum.r = Clamp01(sum.r);
-        sum.g = Clamp01(sum.g);
-        sum.b = Clamp01(sum.b);
-        sum.a = Clamp01(sum.a);
         return Unpremultiply(sum);
     }
 

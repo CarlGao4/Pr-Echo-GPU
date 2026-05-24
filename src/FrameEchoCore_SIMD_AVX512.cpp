@@ -101,7 +101,7 @@ static inline __m512 UnpremultiplySIMD_4(__m512 pixel)
     __m512 result = _mm512_mul_ps(pixel, cleanInv);
     result = _mm512_mask_blend_ps(0b1000100010001000, result, pixel);
 
-    return Clamp01SIMD_4(result);
+    return result;
 }
 
 /// Over composite for four pixels: out = src + dst * (1 - src.a)
@@ -143,7 +143,6 @@ PixelRGBA_4 ComposeFourSamplesAVX512(
             sum = _mm512_add_ps(sum, PremultiplySIMD_4(px, samples0[i].opacity));
         }
 
-        sum = Clamp01SIMD_4(sum);
         PixelRGBA_4 result;
         StoreFourPixels(result, UnpremultiplySIMD_4(sum));
         return result;

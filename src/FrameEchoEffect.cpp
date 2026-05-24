@@ -41,6 +41,8 @@ static const char kFrameShortagePopup[] =
 
 static constexpr A_long kCountSliderMax = 300;
 
+bool isPremiere = false;
+
 static frame_echo::WindowFunction ToWindowFunction(A_long popupValue)
 {
     switch (popupValue)
@@ -214,12 +216,17 @@ static PF_Err GlobalSetup(
 
     if (in_data->appl_id == 'PrMr')
     {
+        isPremiere = true;
         AEFX_SuiteScoper<PF_PixelFormatSuite1> pixelFormatSuite(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1, out_data);
         (*pixelFormatSuite->ClearSupportedPixelFormats)(in_data->effect_ref);
         (*pixelFormatSuite->AddSupportedPixelFormat)(in_data->effect_ref, PrPixelFormat_VUYA_4444_32f);
         (*pixelFormatSuite->AddSupportedPixelFormat)(in_data->effect_ref, PrPixelFormat_BGRA_4444_32f);
         AEFX_SuiteScoper<PF_UtilitySuite13> utilitySuite(in_data, kPFUtilitySuite, kPFUtilitySuiteVersion13, out_data);
         (*utilitySuite->EffectWantsCheckedOutFramesToMatchRenderPixelFormat)(in_data->effect_ref);
+    }
+    else if (in_data->appl_id != 'FXTC')
+    {
+        return PF_Err_INVALID_INDEX;
     }
 
     return PF_Err_NONE;
@@ -451,7 +458,6 @@ static frame_echo::PixelRGBA ReadPixelRGBA(
     const PF_LayerDef* src,
     int x,
     int y,
-    bool isPremiere,
     bool isVUYA)
 {
     if (x < 0 || x >= src->width || y < 0 || y >= src->height)
@@ -501,7 +507,6 @@ static void WritePixelRGBA(
     int x,
     int y,
     const frame_echo::PixelRGBA& pixel,
-    bool isPremiere,
     bool isVUYA)
 {
     if (isPremiere)
@@ -576,7 +581,6 @@ struct RenderContext
     const std::vector<SampleSource>* sources = nullptr;
     frame_echo::BlendMode blendMode = frame_echo::BlendMode::BlendNewOnTop;
     float currentOpacity = 1.0f;
-    bool isPremiere = false;
     bool isVUYA = false;
     frame_echo::FrameShortageBehavior shortageBehavior = frame_echo::FrameShortageBehavior::BlankTransparent;
     frame_echo::PixelRGBA shortageColor = {};
@@ -620,7 +624,9 @@ static void CheckoutFrame(
 static void RenderRows(
     const RenderContext& context,
     int yStart,
-    int yEnd)
+    int yEnd,
+    int xStart,
+    int xEnd)
 {
     std::vector<frame_echo::TemporalSample> samples;
     samples.reserve(context.sources->size());
@@ -628,14 +634,13 @@ static void RenderRows(
 
     for (int y = yStart; y < yEnd; ++y)
     {
-        for (int x = 0; x < context.output->width; ++x)
+        for (int x = xStart; x < xEnd; ++x)
         {
             const frame_echo::PixelRGBA sourcePixel = ReadPixelRGBA(
                 context.in_data,
                 context.src,
                 x,
                 y,
-                context.isPremiere,
                 context.isVUYA);
 
             samples.clear();
@@ -648,7 +653,7 @@ static void RenderRows(
                 }
                 else if (source.layer)
                 {
-                    pixel = ReadPixelRGBA(context.in_data, source.layer, x, y, context.isPremiere, context.isVUYA);
+                    pixel = ReadPixelRGBA(context.in_data, source.layer, x, y, context.isVUYA);
                 }
                 else if (context.shortageBehavior == frame_echo::FrameShortageBehavior::Repeat)
                 {
@@ -663,7 +668,7 @@ static void RenderRows(
             }
 
             const frame_echo::PixelRGBA composed = frame_echo::ComposeSamples(samples, context.blendMode);
-            WritePixelRGBA(context.in_data, context.output, x, y, composed, context.isPremiere, context.isVUYA);
+            WritePixelRGBA(context.in_data, context.output, x, y, composed, context.isVUYA);
         }
     }
 }
@@ -679,7 +684,6 @@ static PF_Err Render(
     settings.forwardMaxOpacity = frame_echo::Clamp01(settings.forwardMaxOpacity);
     settings.backwardMaxOpacity = frame_echo::Clamp01(settings.backwardMaxOpacity);
 
-    const bool isPremiere = in_data->appl_id == 'PrMr';
     bool isVUYA = false;
     if (isPremiere)
     {
@@ -766,39 +770,18 @@ static PF_Err Render(
     context.sources = &sources;
     context.blendMode = settings.blendMode;
     context.currentOpacity = currentOpacity;
-    context.isPremiere = isPremiere;
     context.isVUYA = isVUYA;
     context.shortageBehavior = settings.frameShortageBehavior;
     context.shortageColor = ReadColorParam(params[FRAME_ECHO_FRAME_SHORTAGE_COLOR]);
 
-    const unsigned int threadCount = isPremiere ? std::max(1u, std::min<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(output->height))) : 1;
-    if (threadCount <= 1)
-    {
-        RenderRows(context, 0, output->height);
-    }
-    else
-    {
-        std::vector<std::thread> workers;
-        workers.reserve(threadCount);
-        int rowsPerThread = output->height / static_cast<int>(threadCount);
-        int rowStart = 0;
-        for (unsigned int workerIndex = 0; workerIndex < threadCount; ++workerIndex)
-        {
-            const int rowEnd = (workerIndex == threadCount - 1)
-                ? output->height
-                : (rowStart + rowsPerThread);
-            workers.emplace_back(RenderRows, std::cref(context), rowStart, rowEnd);
-            rowStart = rowEnd;
-        }
-
-        for (std::thread& worker : workers)
-        {
-            if (worker.joinable())
-            {
-                worker.join();
-            }
-        }
-    }
+    // Only renders extent_hint
+    RenderRows(
+        context,
+        std::max(0, output->extent_hint.top),
+        std::min(output->height, output->extent_hint.bottom),
+        std::max(0, output->extent_hint.left),
+        std::min(output->width, output->extent_hint.right)
+    );
 
     for (CheckedOutFrame& frame : backwardFrames)
     {

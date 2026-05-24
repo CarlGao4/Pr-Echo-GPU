@@ -206,6 +206,9 @@ static PF_Err GlobalSetup(
     PF_ParamDef* params[],
     PF_LayerDef* output)
 {
+    // Detect CPU features (SSE4.2, AVX2, AVX-512) at startup
+    frame_echo::DetectCPUFeatures();
+
     out_data->my_version = PF_VERSION(1, 0, 0, PF_Stage_DEVELOP, 0);
     out_data->out_flags |= PF_OutFlag_DEEP_COLOR_AWARE;
     out_data->out_flags |= PF_OutFlag_WIDE_TIME_INPUT;
@@ -632,43 +635,158 @@ static void RenderRows(
     samples.reserve(context.sources->size());
     const frame_echo::PixelRGBA blankTransparent = frame_echo::MakeBlankTransparent();
 
+    // Reusable vectors for SIMD batch processing
+    std::vector<frame_echo::TemporalSample> samples1;
+    samples1.reserve(context.sources->size());
+    std::vector<frame_echo::TemporalSample> samples2;
+    samples2.reserve(context.sources->size());
+    std::vector<frame_echo::TemporalSample> samples3;
+    samples3.reserve(context.sources->size());
+
+    // Small helper lambda to populate one entry in all sample vectors from a source.
+    // `p...` are the pixel values for pixel 0..N at the current source index.
+    auto pushSamples = [&](const frame_echo::PixelRGBA& p0) {
+        samples.push_back(frame_echo::TemporalSample{p0, 0.0f});
+    };
+    auto pushSamples2 = [&](const frame_echo::PixelRGBA& p0, const frame_echo::PixelRGBA& p1) {
+        samples.push_back(frame_echo::TemporalSample{p0, 0.0f});
+        samples1.push_back(frame_echo::TemporalSample{p1, 0.0f});
+    };
+    auto pushSamples4 = [&](const frame_echo::PixelRGBA& p0, const frame_echo::PixelRGBA& p1,
+                             const frame_echo::PixelRGBA& p2, const frame_echo::PixelRGBA& p3) {
+        samples.push_back(frame_echo::TemporalSample{p0, 0.0f});
+        samples1.push_back(frame_echo::TemporalSample{p1, 0.0f});
+        samples2.push_back(frame_echo::TemporalSample{p2, 0.0f});
+        samples3.push_back(frame_echo::TemporalSample{p3, 0.0f});
+    };
+
+    // Read a pixel from a source layer (or apply shortage behavior).
+    auto resolvePixel = [&](const SampleSource& source,
+                             int px, int py,
+                             const frame_echo::PixelRGBA& srcPx) -> frame_echo::PixelRGBA
+    {
+        if (source.isCurrent)
+        {
+            return srcPx;
+        }
+        if (source.layer)
+        {
+            return ReadPixelRGBA(context.in_data, source.layer, px, py, context.isVUYA);
+        }
+        if (context.shortageBehavior == frame_echo::FrameShortageBehavior::Repeat)
+        {
+            return srcPx;
+        }
+        if (context.shortageBehavior == frame_echo::FrameShortageBehavior::SolidColor)
+        {
+            return context.shortageColor;
+        }
+        return blankTransparent;
+    };
+
     for (int y = yStart; y < yEnd; ++y)
     {
-        for (int x = xStart; x < xEnd; ++x)
+        int x = xStart;
+        while (x < xEnd)
         {
-            const frame_echo::PixelRGBA sourcePixel = ReadPixelRGBA(
-                context.in_data,
-                context.src,
-                x,
-                y,
-                context.isVUYA);
+            // --- AVX-512: process four pixels at once ---
+            if (frame_echo::g_hasAVX512 && x + 3 < xEnd)
+            {
+                const frame_echo::PixelRGBA srcPx0 = ReadPixelRGBA(
+                    context.in_data, context.src, x,     y, context.isVUYA);
+                const frame_echo::PixelRGBA srcPx1 = ReadPixelRGBA(
+                    context.in_data, context.src, x + 1, y, context.isVUYA);
+                const frame_echo::PixelRGBA srcPx2 = ReadPixelRGBA(
+                    context.in_data, context.src, x + 2, y, context.isVUYA);
+                const frame_echo::PixelRGBA srcPx3 = ReadPixelRGBA(
+                    context.in_data, context.src, x + 3, y, context.isVUYA);
+
+                samples.clear();
+                samples1.clear();
+                samples2.clear();
+                samples3.clear();
+                for (const SampleSource& source : *context.sources)
+                {
+                    const frame_echo::PixelRGBA p0 = resolvePixel(source, x,     y, srcPx0);
+                    const frame_echo::PixelRGBA p1 = resolvePixel(source, x + 1, y, srcPx1);
+                    const frame_echo::PixelRGBA p2 = resolvePixel(source, x + 2, y, srcPx2);
+                    const frame_echo::PixelRGBA p3 = resolvePixel(source, x + 3, y, srcPx3);
+
+                    pushSamples4(p0, p1, p2, p3);
+                }
+                // Write back the correct weights after the loop
+                for (std::size_t i = 0; i < samples.size(); ++i)
+                {
+                    samples[i].opacity = (*context.sources)[i].weight;
+                    samples1[i].opacity = (*context.sources)[i].weight;
+                    samples2[i].opacity = (*context.sources)[i].weight;
+                    samples3[i].opacity = (*context.sources)[i].weight;
+                }
+
+                const frame_echo::PixelRGBA_4 quad = frame_echo::ComposeFourSamplesAVX512(
+                    samples, samples1, samples2, samples3, context.blendMode);
+
+                WritePixelRGBA(context.in_data, context.output, x,     y, quad.p0, context.isVUYA);
+                WritePixelRGBA(context.in_data, context.output, x + 1, y, quad.p1, context.isVUYA);
+                WritePixelRGBA(context.in_data, context.output, x + 2, y, quad.p2, context.isVUYA);
+                WritePixelRGBA(context.in_data, context.output, x + 3, y, quad.p3, context.isVUYA);
+
+                x += 4;
+                continue;
+            }
+
+            // --- AVX2: process two pixels at once ---
+            if (frame_echo::g_hasAVX2 && x + 1 < xEnd)
+            {
+                const frame_echo::PixelRGBA srcPx0 = ReadPixelRGBA(
+                    context.in_data, context.src, x,     y, context.isVUYA);
+                const frame_echo::PixelRGBA srcPx1 = ReadPixelRGBA(
+                    context.in_data, context.src, x + 1, y, context.isVUYA);
+
+                samples.clear();
+                samples1.clear();
+                for (const SampleSource& source : *context.sources)
+                {
+                    const frame_echo::PixelRGBA p0 = resolvePixel(source, x,     y, srcPx0);
+                    const frame_echo::PixelRGBA p1 = resolvePixel(source, x + 1, y, srcPx1);
+
+                    pushSamples2(p0, p1);
+                }
+                for (std::size_t i = 0; i < samples.size(); ++i)
+                {
+                    samples[i].opacity = (*context.sources)[i].weight;
+                    samples1[i].opacity = (*context.sources)[i].weight;
+                }
+
+                const frame_echo::PixelRGBA_2 dual = frame_echo::ComposeTwoSamplesAVX2(
+                    samples, samples1, context.blendMode);
+
+                WritePixelRGBA(context.in_data, context.output, x,     y, dual.p0, context.isVUYA);
+                WritePixelRGBA(context.in_data, context.output, x + 1, y, dual.p1, context.isVUYA);
+
+                x += 2;
+                continue;
+            }
+
+            // --- Single-pixel fallback ---
+            const frame_echo::PixelRGBA srcPx = ReadPixelRGBA(
+                context.in_data, context.src, x, y, context.isVUYA);
 
             samples.clear();
             for (const SampleSource& source : *context.sources)
             {
-                frame_echo::PixelRGBA pixel = blankTransparent;
-                if (source.isCurrent)
-                {
-                    pixel = sourcePixel;
-                }
-                else if (source.layer)
-                {
-                    pixel = ReadPixelRGBA(context.in_data, source.layer, x, y, context.isVUYA);
-                }
-                else if (context.shortageBehavior == frame_echo::FrameShortageBehavior::Repeat)
-                {
-                    pixel = sourcePixel;
-                }
-                else if (context.shortageBehavior == frame_echo::FrameShortageBehavior::SolidColor)
-                {
-                    pixel = context.shortageColor;
-                }
-
-                samples.push_back(frame_echo::TemporalSample{pixel, source.weight});
+                const frame_echo::PixelRGBA pixel = resolvePixel(source, x, y, srcPx);
+                pushSamples(pixel);
+            }
+            for (std::size_t i = 0; i < samples.size(); ++i)
+            {
+                samples[i].opacity = (*context.sources)[i].weight;
             }
 
             const frame_echo::PixelRGBA composed = frame_echo::ComposeSamples(samples, context.blendMode);
             WritePixelRGBA(context.in_data, context.output, x, y, composed, context.isVUYA);
+
+            ++x;
         }
     }
 }

@@ -48,13 +48,29 @@ endif()
 message(STATUS "Using PiPL tool: ${PIPL_TOOL}")
 
 add_library(PrEchoCore STATIC
-  src/FrameEchoCore.cpp)
+  src/FrameEchoCore.cpp
+  src/FrameEchoCore_SIMD_SSE2.cpp
+  src/FrameEchoCore_SIMD_AVX2.cpp
+  src/FrameEchoCore_SIMD_AVX512.cpp)
 
 target_include_directories(PrEchoCore PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_compile_definitions(PrEchoCore PRIVATE
   _USE_MATH_DEFINES)
+
+# FrameEchoCore_SIMD_SSE2.cpp must be compiled with /arch:AVX2 so that
+# all SSE/AVX intrinsics emit VEX-coded instructions and FMA is available.
+set_source_files_properties(src/FrameEchoCore_SIMD_SSE2.cpp PROPERTIES
+  COMPILE_FLAGS "/arch:AVX2")
+
+# FrameEchoCore_SIMD_AVX2.cpp uses true 256-bit AVX2 intrinsics.
+set_source_files_properties(src/FrameEchoCore_SIMD_AVX2.cpp PROPERTIES
+  COMPILE_FLAGS "/arch:AVX2")
+
+# FrameEchoCore_SIMD_AVX512.cpp uses true 512-bit AVX-512 intrinsics.
+set_source_files_properties(src/FrameEchoCore_SIMD_AVX512.cpp PROPERTIES
+  COMPILE_FLAGS "/arch:AVX512")
 
 add_library(PrEchoPlugin SHARED
   src/FrameEchoEffect.cpp

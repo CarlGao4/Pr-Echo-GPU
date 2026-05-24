@@ -1,7 +1,61 @@
 #include "FrameEchoCore.h"
 
+#include <intrin.h>
+
 namespace frame_echo
 {
+
+// -----------------------------------------------------------------------
+// CPU feature detection via CPUID — detects SSE4.2, AVX2, and AVX-512.
+// -----------------------------------------------------------------------
+bool g_hasSSE4_2 = false;
+bool g_hasAVX2 = false;
+bool g_hasAVX512 = false;
+
+void DetectCPUFeatures()
+{
+    int cpuInfo[4] = {};
+
+    // Default all flags to false
+    g_hasSSE4_2 = false;
+    g_hasAVX2 = false;
+    g_hasAVX512 = false;
+
+    // CPUID leaf 0: get max supported leaf
+    __cpuid(cpuInfo, 0);
+    const int maxLeaf = cpuInfo[0];
+    if (maxLeaf < 1)
+    {
+        return;  // Leaf 1 not available — nothing to detect
+    }
+
+    // Leaf 1: check SSE4.2 (ECX bit 20) and XSAVE (ECX bit 27)
+    __cpuid(cpuInfo, 1);
+    g_hasSSE4_2 = (cpuInfo[2] & (1 << 20)) != 0;
+    const bool hasXSAVE = (cpuInfo[2] & (1 << 27)) != 0;
+
+    if (maxLeaf < 7)
+    {
+        return;  // Leaf 7 not available — AVX2/AVX-512 can't be checked
+    }
+
+    // Leaf 7 subleaf 0: check AVX2 and AVX-512 feature bits
+    __cpuidex(cpuInfo, 7, 0);
+    // EBX bit 5 = AVX2
+    g_hasAVX2 = (cpuInfo[1] & (1 << 5)) != 0;
+
+    // EBX bit 16 = AVX512F
+    const bool hasAVX512F = (cpuInfo[1] & (1 << 16)) != 0;
+    // EBX bit 17 = AVX512DQ
+    const bool hasAVX512DQ = (cpuInfo[1] & (1 << 17)) != 0;
+
+    if (hasXSAVE && hasAVX512F && hasAVX512DQ)
+    {
+        // Verify OS has enabled the upper ZMM registers (XCR0 bits 5, 6, 7)
+        unsigned long long xcr0 = _xgetbv(0);
+        g_hasAVX512 = ((xcr0 & 0xE0) == 0xE0);  // bits 5, 6, 7 all set
+    }
+}
 
 float Clamp01(float value)
 {
@@ -146,6 +200,24 @@ static PixelRGBA Over(const PixelRGBA& dst, const PixelRGBA& src)
 
 PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode blendMode)
 {
+    // Dispatch priority: AVX-512 > AVX2 > SSE4.2 > scalar fallback
+    // AVX-512 and AVX2 versions should be called with multiple samples, so only call SSE2 version as only 1 sample is provided here
+    // For actual usage, check RenderRows function
+    if (g_hasAVX512)
+    {
+        return ComposeSamples_SSE2(samples, blendMode);
+    }
+
+    if (g_hasAVX2)
+    {
+        return ComposeSamples_SSE2(samples, blendMode);
+    }
+
+    if (g_hasSSE4_2)
+    {
+        return ComposeSamples_SSE2(samples, blendMode);
+    }
+
     if (samples.empty())
     {
         return PixelRGBA{};
@@ -198,7 +270,7 @@ PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode b
     PixelRGBA composed{};
     for (const TemporalSample& sample : samples)
     {
-        composed = blendMode == BlendMode::BlendNewOnBottom ? 
+        composed = blendMode == BlendMode::BlendNewOnBottom ?
             Over(Premultiply(sample.pixel, sample.opacity), composed):
             Over(composed, Premultiply(sample.pixel, sample.opacity));
     }

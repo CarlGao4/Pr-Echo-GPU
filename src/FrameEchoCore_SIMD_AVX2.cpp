@@ -70,19 +70,22 @@ static inline __m256 UnpremultiplySIMD_2(__m256 pixel)
     const __m256 zero = _mm256_setzero_ps();
     const __m256 one  = _mm256_set1_ps(1.0f);
 
-    // Per-lane mask: 0xFFFFFFFF where alpha <= 0, else 0
-    const __m256 mask = _mm256_cmp_ps(alpha, zero, _CMP_LE_OS);
+    // Clamp alpha to [0, 1] before reciprocal
+    const __m256 clampedAlpha = _mm256_min_ps(_mm256_max_ps(alpha, zero), one);
 
-    // Avoid division by zero: use 1.0 where alpha <= 0
-    const __m256 safeAlpha = _mm256_blendv_ps(alpha, one, mask);
+    // Per-lane mask: 0xFFFFFFFF where clampedAlpha <= 0, else 0
+    const __m256 mask = _mm256_cmp_ps(clampedAlpha, zero, _CMP_LE_OS);
+
+    // Avoid division by zero: use 1.0 where clampedAlpha <= 0
+    const __m256 safeAlpha = _mm256_blendv_ps(clampedAlpha, one, mask);
     const __m256 invAlpha  = _mm256_div_ps(one, safeAlpha);
 
     // Zero the reciprocal for lanes that were <= 0
     const __m256 cleanInv = _mm256_andnot_ps(mask, invAlpha);
 
-    // Scale RGB by invAlpha; preserve original alpha from pixel
+    // Scale RGB by invAlpha; preserve clamped alpha from clampedAlpha
     __m256 result = _mm256_mul_ps(pixel, cleanInv);
-    result = _mm256_blend_ps(result, pixel, 0b10001000);
+    result = _mm256_blend_ps(result, clampedAlpha, 0b10001000);
 
     return result;
 }

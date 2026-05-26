@@ -43,67 +43,15 @@ static constexpr A_long kCountSliderMax = 300;
 
 bool isPremiere = false;
 
-static frame_echo::WindowFunction ToWindowFunction(A_long popupValue)
-{
-    switch (popupValue)
-    {
-    case FRAME_ECHO_WINDOW_CONSTANT:
-        return frame_echo::WindowFunction::Constant;
-    case FRAME_ECHO_WINDOW_LINEAR:
-        return frame_echo::WindowFunction::Linear;
-    case FRAME_ECHO_WINDOW_SQUARE_ROOT:
-        return frame_echo::WindowFunction::SquareRoot;
-    case FRAME_ECHO_WINDOW_SQUARE:
-        return frame_echo::WindowFunction::Square;
-    case FRAME_ECHO_WINDOW_COSINE:
-        return frame_echo::WindowFunction::Cosine;
-    case FRAME_ECHO_WINDOW_SMOOTH_STEP:
-    default:
-        return frame_echo::WindowFunction::SmoothStep;
-    }
-}
-
-static frame_echo::BlendMode ToBlendMode(A_long popupValue)
-{
-    switch (popupValue)
-    {
-    case FRAME_ECHO_BLEND_NEW_ON_BOTTOM:
-        return frame_echo::BlendMode::BlendNewOnBottom;
-    case FRAME_ECHO_BLEND_ADD:
-        return frame_echo::BlendMode::Add;
-    case FRAME_ECHO_BLEND_MAXIMUM:
-        return frame_echo::BlendMode::Maximum;
-    case FRAME_ECHO_BLEND_MINIMUM:
-        return frame_echo::BlendMode::Minimum;
-    case FRAME_ECHO_BLEND_NEW_ON_TOP:
-    default:
-        return frame_echo::BlendMode::BlendNewOnTop;
-    }
-}
-
-static frame_echo::FrameShortageBehavior ToFrameShortageBehavior(A_long popupValue)
-{
-    switch (popupValue)
-    {
-    case FRAME_ECHO_FRAME_SHORTAGE_REPEAT:
-        return frame_echo::FrameShortageBehavior::Repeat;
-    case FRAME_ECHO_FRAME_SHORTAGE_SOLID_COLOR:
-        return frame_echo::FrameShortageBehavior::SolidColor;
-    case FRAME_ECHO_FRAME_SHORTAGE_BLANK_TRANSPARENT:
-    default:
-        return frame_echo::FrameShortageBehavior::BlankTransparent;
-    }
-}
-
 static frame_echo::TemporalSettings BuildTemporalSettings(PF_ParamDef* params[])
 {
     frame_echo::TemporalSettings settings;
     settings.backwardFrameCount = params[FRAME_ECHO_BACKWARD_FRAME_COUNT]->u.sd.value;
     settings.forwardFrameCount = params[FRAME_ECHO_FORWARD_FRAME_COUNT]->u.sd.value;
-    settings.blendMode = ToBlendMode(params[FRAME_ECHO_BLEND_MODE]->u.pd.value);
+    settings.blendMode = frame_echo::ToBlendMode(params[FRAME_ECHO_BLEND_MODE]->u.pd.value);
     settings.syncForwardBackward = params[FRAME_ECHO_SYNC_FORWARD_BACKWARD]->u.bd.value != FALSE;
-    settings.forwardWindowFunction = ToWindowFunction(params[FRAME_ECHO_FORWARD_WINDOW_FUNCTION]->u.pd.value);
-    settings.backwardWindowFunction = ToWindowFunction(params[FRAME_ECHO_BACKWARD_WINDOW_FUNCTION]->u.pd.value);
+    settings.forwardWindowFunction = frame_echo::ToWindowFunction(params[FRAME_ECHO_FORWARD_WINDOW_FUNCTION]->u.pd.value);
+    settings.backwardWindowFunction = frame_echo::ToWindowFunction(params[FRAME_ECHO_BACKWARD_WINDOW_FUNCTION]->u.pd.value);
     settings.forwardWindowFalloffRatio = params[FRAME_ECHO_FORWARD_WINDOW_FALLOFF_RATIO]->u.fs_d.value;
     settings.backwardWindowFalloffRatio = params[FRAME_ECHO_BACKWARD_WINDOW_FALLOFF_RATIO]->u.fs_d.value;
     settings.forwardWindowFalloffMapping =
@@ -116,7 +64,7 @@ static frame_echo::TemporalSettings BuildTemporalSettings(PF_ParamDef* params[])
         : frame_echo::WindowFalloffMapping::OutputMapped;
     settings.forwardMaxOpacity = params[FRAME_ECHO_FORWARD_MAX_OPACITY]->u.fs_d.value;
     settings.backwardMaxOpacity = params[FRAME_ECHO_BACKWARD_MAX_OPACITY]->u.fs_d.value;
-    settings.frameShortageBehavior = ToFrameShortageBehavior(params[FRAME_ECHO_FRAME_SHORTAGE_BEHAVIOR]->u.pd.value);
+    settings.frameShortageBehavior = frame_echo::ToFrameShortageBehavior(params[FRAME_ECHO_FRAME_SHORTAGE_BEHAVIOR]->u.pd.value);
     return settings;
 }
 
@@ -673,10 +621,8 @@ static void RenderRows(
         {
             return ReadPixelRGBA(context.in_data, source.layer, px, py, context.isVUYA);
         }
-        if (context.shortageBehavior == frame_echo::FrameShortageBehavior::Repeat)
-        {
-            return srcPx;
-        }
+        // Only BlankTransparent and SolidColor reach here;
+        // Repeat is handled by pre-patching source.layer above.
         if (context.shortageBehavior == frame_echo::FrameShortageBehavior::SolidColor)
         {
             return context.shortageColor;
@@ -816,13 +762,13 @@ static PF_Err Render(
 
     const bool canCheckout = (in_data->time_step != 0) && (in_data->time_scale != 0);
     const float currentOpacity = frame_echo::GetCurrentFrameOpacity(settings);
-    const std::vector<float> backwardWeights = frame_echo::BuildBackwardWeights(
+    const std::vector<float> backwardWeights = frame_echo::BuildDirectionalWeights(
         settings.backwardFrameCount,
         settings.syncForwardBackward ? settings.forwardWindowFunction : settings.backwardWindowFunction,
         settings.syncForwardBackward ? settings.forwardWindowFalloffRatio : settings.backwardWindowFalloffRatio,
         settings.syncForwardBackward ? settings.forwardWindowFalloffMapping : settings.backwardWindowFalloffMapping,
         settings.syncForwardBackward ? settings.forwardMaxOpacity : settings.backwardMaxOpacity);
-    const std::vector<float> forwardWeights = frame_echo::BuildForwardWeights(
+    const std::vector<float> forwardWeights = frame_echo::BuildDirectionalWeights(
         settings.forwardFrameCount,
         settings.forwardWindowFunction,
         settings.forwardWindowFalloffRatio,
@@ -846,11 +792,11 @@ static PF_Err Render(
 
     std::vector<SampleSource> sources;
     sources.reserve(1 + backwardWeights.size() + forwardWeights.size());
-    for (std::size_t index = 0; index < backwardWeights.size(); ++index)
+    for (std::size_t index = backwardWeights.size(); index > 0; --index)
     {
         sources.push_back(SampleSource{
-            backwardFrames[index].valid ? backwardFrames[index].layer : nullptr,
-            backwardWeights[index],
+            backwardFrames[index - 1].valid ? backwardFrames[index - 1].layer : nullptr,
+            backwardWeights[index - 1],
             false});
     }
 

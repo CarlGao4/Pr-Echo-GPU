@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "FrameEchoParams.h"
+
 namespace frame_echo
 {
 // -----------------------------------------------------------------------
@@ -96,18 +98,18 @@ struct TemporalSettings
     float backwardMaxOpacity = 1.0f;
     bool syncForwardBackward = true;
     FrameShortageBehavior frameShortageBehavior = FrameShortageBehavior::BlankTransparent;
+    PixelRGBA shortageColor = {};
 };
+
+// ---- Popup-to-enum conversion helpers (shared by CPU and GPU) ----
+WindowFunction ToWindowFunction(int popupValue);
+BlendMode      ToBlendMode(int popupValue);
+FrameShortageBehavior ToFrameShortageBehavior(int popupValue);
 
 float Clamp01(float value);
 PixelRGBA MakeBlankTransparent();
 float EvaluateWindowFunction(WindowFunction function, float normalizedPosition);
-std::vector<float> BuildBackwardWeights(
-    int frameCount,
-    WindowFunction function,
-    float falloffRatio,
-    WindowFalloffMapping mapping,
-    float maxOpacity);
-std::vector<float> BuildForwardWeights(
+std::vector<float> BuildDirectionalWeights(
     int frameCount,
     WindowFunction function,
     float falloffRatio,

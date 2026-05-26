@@ -68,7 +68,7 @@ static inline __m128 PremultiplySIMD(__m128 pixel, float opacity)
     return _mm_mul_ps(rgb_one, clampedAlpha);
 }
 
-/// Unpremultiply: out.rgb = pixel.rgb / pixel.a (clamped), out.a = pixel.a
+/// Unpremultiply: out.rgb = pixel.rgb / clampedAlpha, out.a = clampedAlpha
 /// Returns zero if pixel.a <= 0.
 static inline __m128 UnpremultiplySIMD(__m128 pixel)
 {
@@ -82,12 +82,14 @@ static inline __m128 UnpremultiplySIMD(__m128 pixel)
         return _mm_setzero_ps();
     }
 
-    const float invAlpha = 1.0f / alpha_f;
+    // Clamp alpha to [0,1] before reciprocal (safety)
+    const float clampedAlpha = (alpha_f > 1.0f) ? 1.0f : ((alpha_f < 0.0f) ? 0.0f : alpha_f);
+    const float invAlpha = 1.0f / clampedAlpha;
     const __m128 invAlphaV = Broadcast(invAlpha);
 
-    // Scale RGB by invAlpha; preserve original alpha channel
+    // Scale RGB by invAlpha; write clamped alpha into output alpha
     __m128 result = _mm_mul_ps(pixel, invAlphaV);
-    result = _mm_blend_ps(result, pixel, 0b1000);
+    result = _mm_blend_ps(result, Broadcast(clampedAlpha), 0b1000);
 
     return result;
 }

@@ -6,7 +6,7 @@ namespace frame_echo
 {
 
 // -----------------------------------------------------------------------
-// CPU feature detection via CPUID — detects SSE4.2, AVX2, and AVX-512.
+// CPU feature detection via CPUID - detects SSE4.2, AVX2, and AVX-512.
 // -----------------------------------------------------------------------
 bool g_hasSSE4_2 = false;
 bool g_hasAVX2 = false;
@@ -26,7 +26,7 @@ void DetectCPUFeatures()
     const int maxLeaf = cpuInfo[0];
     if (maxLeaf < 1)
     {
-        return;  // Leaf 1 not available — nothing to detect
+        return;  // Leaf 1 not available - nothing to detect
     }
 
     // Leaf 1: check SSE4.2 (ECX bit 20) and XSAVE (ECX bit 27)
@@ -36,7 +36,7 @@ void DetectCPUFeatures()
 
     if (maxLeaf < 7)
     {
-        return;  // Leaf 7 not available — AVX2/AVX-512 can't be checked
+        return;  // Leaf 7 not available - AVX2/AVX-512 can't be checked
     }
 
     // Leaf 7 subleaf 0: check AVX2 and AVX-512 feature bits
@@ -90,13 +90,66 @@ float EvaluateWindowFunction(WindowFunction function, float normalizedPosition)
     return t;
 }
 
-static std::vector<float> BuildDirectionalWeights(
+// ---- Popup-to-enum conversion helpers ----
+
+WindowFunction ToWindowFunction(int popupValue)
+{
+    switch (popupValue)
+    {
+    case FRAME_ECHO_WINDOW_CONSTANT:
+        return WindowFunction::Constant;
+    case FRAME_ECHO_WINDOW_LINEAR:
+        return WindowFunction::Linear;
+    case FRAME_ECHO_WINDOW_SQUARE_ROOT:
+        return WindowFunction::SquareRoot;
+    case FRAME_ECHO_WINDOW_SQUARE:
+        return WindowFunction::Square;
+    case FRAME_ECHO_WINDOW_COSINE:
+        return WindowFunction::Cosine;
+    case FRAME_ECHO_WINDOW_SMOOTH_STEP:
+    default:
+        return WindowFunction::SmoothStep;
+    }
+}
+
+BlendMode ToBlendMode(int popupValue)
+{
+    switch (popupValue)
+    {
+    case FRAME_ECHO_BLEND_NEW_ON_BOTTOM:
+        return BlendMode::BlendNewOnBottom;
+    case FRAME_ECHO_BLEND_ADD:
+        return BlendMode::Add;
+    case FRAME_ECHO_BLEND_MAXIMUM:
+        return BlendMode::Maximum;
+    case FRAME_ECHO_BLEND_MINIMUM:
+        return BlendMode::Minimum;
+    case FRAME_ECHO_BLEND_NEW_ON_TOP:
+    default:
+        return BlendMode::BlendNewOnTop;
+    }
+}
+
+FrameShortageBehavior ToFrameShortageBehavior(int popupValue)
+{
+    switch (popupValue)
+    {
+    case FRAME_ECHO_FRAME_SHORTAGE_REPEAT:
+        return FrameShortageBehavior::Repeat;
+    case FRAME_ECHO_FRAME_SHORTAGE_SOLID_COLOR:
+        return FrameShortageBehavior::SolidColor;
+    case FRAME_ECHO_FRAME_SHORTAGE_BLANK_TRANSPARENT:
+    default:
+        return FrameShortageBehavior::BlankTransparent;
+    }
+}
+
+std::vector<float> BuildDirectionalWeights(
     int frameCount,
     WindowFunction function,
     float falloffRatio,
     WindowFalloffMapping mapping,
-    float maxOpacity,
-    bool reverseOrder)
+    float maxOpacity)
 {
     std::vector<float> weights;
     if (frameCount <= 0)
@@ -110,7 +163,7 @@ static std::vector<float> BuildDirectionalWeights(
 
     for (int index = 0; index < frameCount; ++index)
     {
-        const int orderedIndex = reverseOrder ? (frameCount - 1 - index) : index;
+        const int orderedIndex = frameCount - 1 - index;
         const float baseNormalized = static_cast<float>(orderedIndex + 1) / static_cast<float>(frameCount + 1);
         float mappedInput = baseNormalized;
         float weight = 0.0f;
@@ -130,26 +183,6 @@ static std::vector<float> BuildDirectionalWeights(
     }
 
     return weights;
-}
-
-std::vector<float> BuildBackwardWeights(
-    int frameCount,
-    WindowFunction function,
-    float falloffRatio,
-    WindowFalloffMapping mapping,
-    float maxOpacity)
-{
-    return BuildDirectionalWeights(frameCount, function, falloffRatio, mapping, maxOpacity, false);
-}
-
-std::vector<float> BuildForwardWeights(
-    int frameCount,
-    WindowFunction function,
-    float falloffRatio,
-    WindowFalloffMapping mapping,
-    float maxOpacity)
-{
-    return BuildDirectionalWeights(frameCount, function, falloffRatio, mapping, maxOpacity, true);
 }
 
 float GetCurrentFrameOpacity(const TemporalSettings& settings)
@@ -178,7 +211,7 @@ PixelRGBA Unpremultiply(const PixelRGBA& pixel)
         return PixelRGBA{};
     }
 
-    const float inverseAlpha = 1.0f / pixel.a;
+    const float inverseAlpha = 1.0f / Clamp01(pixel.a);
     return PixelRGBA{
         pixel.r * inverseAlpha,
         pixel.g * inverseAlpha,
@@ -203,16 +236,6 @@ PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode b
     // Dispatch priority: AVX-512 > AVX2 > SSE4.2 > scalar fallback
     // AVX-512 and AVX2 versions should be called with multiple samples, so only call SSE2 version as only 1 sample is provided here
     // For actual usage, check RenderRows function
-    if (g_hasAVX512)
-    {
-        return ComposeSamples_SSE2(samples, blendMode);
-    }
-
-    if (g_hasAVX2)
-    {
-        return ComposeSamples_SSE2(samples, blendMode);
-    }
-
     if (g_hasSSE4_2)
     {
         return ComposeSamples_SSE2(samples, blendMode);

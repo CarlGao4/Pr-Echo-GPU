@@ -87,19 +87,22 @@ static inline __m512 UnpremultiplySIMD_4(__m512 pixel)
     // Spread alpha across each 128-bit lane
     const __m512 alpha = _mm512_shuffle_ps(pixel, pixel, _MM_SHUFFLE(3, 3, 3, 3));
 
-    // Compare mask: 0xFFFF per lane where alpha <= 0
-    const __mmask16 mask = _mm512_cmp_ps_mask(alpha, zero, _CMP_LE_OS);
+    // Clamp alpha to [0, 1] before reciprocal
+    const __m512 clampedAlpha = _mm512_min_ps(_mm512_max_ps(alpha, zero), one);
 
-    // Safe reciprocal: use 1.0 where alpha <= 0
-    const __m512 safeAlpha = _mm512_mask_blend_ps(mask, alpha, one);
+    // Compare mask: 0xFFFF per lane where clampedAlpha <= 0
+    const __mmask16 mask = _mm512_cmp_ps_mask(clampedAlpha, zero, _CMP_LE_OS);
+
+    // Safe reciprocal: use 1.0 where clampedAlpha <= 0
+    const __m512 safeAlpha = _mm512_mask_blend_ps(mask, clampedAlpha, one);
     const __m512 invAlpha  = _mm512_div_ps(one, safeAlpha);
 
     // Zero the reciprocal for lanes that were <= 0
     const __m512 cleanInv = _mm512_maskz_mov_ps(~mask, invAlpha);
 
-    // Scale RGB by invAlpha; preserve original alpha from pixel
+    // Scale RGB by invAlpha; preserve clamped alpha from clampedAlpha
     __m512 result = _mm512_mul_ps(pixel, cleanInv);
-    result = _mm512_mask_blend_ps(0b1000100010001000, result, pixel);
+    result = _mm512_mask_blend_ps(0b1000100010001000, result, clampedAlpha);
 
     return result;
 }

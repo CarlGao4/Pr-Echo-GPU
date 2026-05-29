@@ -45,7 +45,11 @@ resource 'PiPL' (16000) {
             0x6000006
         },
         AE_Effect_Global_OutFlags_2 {
-            0x08000100
+#ifdef GPU_ENABLED
+            0x0A001500
+#else
+            0x08001500
+#endif
         },
         /* [10] */
         AE_Effect_Match_Name {

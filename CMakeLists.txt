@@ -10,6 +10,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the build type" FORCE)
+endif()
+
 # Use shared CUDA runtime to avoid LIBCMT conflict with /MD(d)
 set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
 
@@ -21,10 +25,17 @@ option(GPU_ENABLE_OPENCL  "Enable OpenCL GPU backend"   ON)
 option(GPU_ENABLE_DIRECTX "Enable DirectX GPU backend"  OFF)
 option(GPU_ENABLE_CUDA    "Enable CUDA GPU backend"     ON)
 
+if(NOT GPU_ENABLED)
+  set(GPU_ENABLE_OPENCL OFF)
+  set(GPU_ENABLE_DIRECTX OFF)
+  set(GPU_ENABLE_CUDA OFF)
+  message(STATUS "GPU_ENABLED is OFF, so all specific backends are disabled")
+endif()
+
 # ============================================================================
 # CUDA Toolkit (>= 11.8) - static link the .cu kernel into the .aex
 # ============================================================================
-if(GPU_ENABLE_CUDA AND GPU_ENABLED)
+if(GPU_ENABLE_CUDA)
   enable_language(CUDA)
   find_package(CUDAToolkit 11.8 REQUIRED)
 
@@ -40,7 +51,7 @@ endif()
 # ============================================================================
 # OpenCL - via find_package(CONFIG)
 # ============================================================================
-if(GPU_ENABLE_OPENCL AND GPU_ENABLED)
+if(GPU_ENABLE_OPENCL)
   find_package(OpenCL CONFIG REQUIRED)
   get_target_property(_OCL_INCDIR OpenCL::Headers INTERFACE_INCLUDE_DIRECTORIES)
   if(NOT _OCL_INCDIR)
@@ -52,7 +63,7 @@ endif()
 # ============================================================================
 # DirectX Shader Compiler
 # ============================================================================
-if(GPU_ENABLE_DIRECTX AND GPU_ENABLED)
+if(GPU_ENABLE_DIRECTX)
   # We use powershell to get the dir because CMake can have trouble with the parentheses in "Program Files (x86)"
   execute_process(
     COMMAND powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')"
@@ -77,12 +88,12 @@ endif()
 # ============================================================================
 # Boost (for OpenCL kernel preprocessing via MSVC /P)
 # ============================================================================
-if(GPU_ENABLE_OPENCL AND GPU_ENABLED)
+if(GPU_ENABLE_OPENCL)
   find_package(Boost REQUIRED)
 endif()
 
 # Disable GPU_ENABLED if all specific backends are OFF
-if(NOT GPU_ENABLE_OPENCL AND NOT GPU_ENABLE_DIRECTX AND NOT GPU_ENABLE_CUDA)
+if(NOT GPU_ENABLE_OPENCL AND NOT GPU_ENABLE_DIRECTX AND NOT GPU_ENABLE_CUDA AND GPU_ENABLED)
   set(GPU_ENABLED OFF)
   message(STATUS "GPU_ENABLED set to OFF since all specific backends are disabled")
 endif()
@@ -90,7 +101,7 @@ endif()
 # ============================================================================
 # Python3 (for CreateCString.py)
 # ============================================================================
-if((GPU_ENABLE_OPENCL OR GPU_ENABLE_DIRECTX) AND GPU_ENABLED)
+if((GPU_ENABLE_OPENCL OR GPU_ENABLE_DIRECTX))
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   message(STATUS "Python3: ${Python3_EXECUTABLE} (${Python3_VERSION})")
 endif()
@@ -194,10 +205,16 @@ add_custom_command(
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/FrameEcho.rc"
   VERBATIM)
 
+if(GPU_ENABLED)
+  set(RR_FLAGS "/D" "GPU_ENABLED=1")
+else()
+  set(RR_FLAGS "")
+endif()
+
 add_custom_command(
   OUTPUT "${GENERATED_RR}"
   COMMAND ${CMAKE_CXX_COMPILER} /nologo /D PRWIN_ENV
-    /I "${AE_HEADERS_DIR}" /I "${AE_RESOURCES_DIR}"
+    /I "${AE_HEADERS_DIR}" /I "${AE_RESOURCES_DIR}" ${RR_FLAGS}
     /EP "${CMAKE_CURRENT_SOURCE_DIR}/FrameEcho.r" > "${GENERATED_RR}"
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/FrameEcho.r"
   VERBATIM)
@@ -226,6 +243,9 @@ if(GPU_ENABLE_OPENCL)
       /I${PREMIERE_HEADERS_DIR} /I${_OCL_INCDIR} /I${Boost_INCLUDE_DIRS}
       /TP /P /Fi${GENERATED_OPENCL_I}
       ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/FrameEchoBlend.cl
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/line_path_removal_inplace.py
+      ${GENERATED_OPENCL_I}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/FrameEchoBlend.cl
     VERBATIM)
 
@@ -233,9 +253,9 @@ if(GPU_ENABLE_OPENCL)
     OUTPUT ${GENERATED_OPENCL_HEADER}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GENERATED_OPENCL_DIR}
     COMMAND ${Python3_EXECUTABLE}
-      ${GPUVIDEOFILTER_UTILS_DIR}/CreateCString.py
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/bin2h.py
       -i ${GENERATED_OPENCL_I} -o ${GENERATED_OPENCL_HEADER}
-      --name kFrameEchoBlend_OpenCLString
+      -n kFrameEchoBlend_OpenCLString
     DEPENDS ${GENERATED_OPENCL_I}
     VERBATIM)
 endif()
@@ -283,10 +303,18 @@ endif()
 # ============================================================================
 # Plugin shared library
 # ============================================================================
-set(PLUGIN_SOURCES src/FrameEchoEffect.cpp)
+set(PLUGIN_SOURCES src/FrameEchoEffect.cpp src/FrameEchoSmartRender.cpp)
+# Then find Smart_Utils.cpp in SDK_INCLUDE_DIRS and add it
+find_file(SMART_UTILS_CPP Smart_Utils.cpp PATHS ${SDK_INCLUDE_DIRS})
+if(SMART_UTILS_CPP)
+  list(APPEND PLUGIN_SOURCES ${SMART_UTILS_CPP})
+else()
+  message(FATAL_ERROR "Smart_Utils.cpp not found in SDK include directories")
+endif()
 
 if(GPU_ENABLED)
   list(APPEND PLUGIN_SOURCES src/FrameEchoPrGpu.cpp)
+  list(APPEND PLUGIN_SOURCES src/FrameEchoAeGpu.cpp)
 endif()
 if(GPU_ENABLE_CUDA)
   list(APPEND PLUGIN_SOURCES src/kernels/FrameEchoBlend.cu)
@@ -312,6 +340,10 @@ target_include_directories(PrEchoPlugin PRIVATE
 target_compile_definitions(PrEchoPlugin PRIVATE
   MSWindows PRWIN_ENV _WINDOWS _USE_MATH_DEFINES PRSDK_GPU_SUPPORT)
 
+if(GPU_ENABLED)
+  target_compile_definitions(PrEchoPlugin PRIVATE GPU_ENABLED=1)
+endif()
+
 # ---- Per-backend ----
 if(GPU_ENABLE_CUDA)
   target_compile_definitions(PrEchoPlugin PRIVATE GPU_ENABLE_CUDA=1)
@@ -319,7 +351,9 @@ if(GPU_ENABLE_CUDA)
 endif()
 
 if(GPU_ENABLE_OPENCL)
-  target_compile_definitions(PrEchoPlugin PRIVATE GPU_ENABLE_OPENCL=1)
+  target_compile_definitions(PrEchoPlugin PRIVATE
+    GPU_ENABLE_OPENCL=1
+    CL_TARGET_OPENCL_VERSION=300)
   target_include_directories(PrEchoPlugin PRIVATE
     "${_OCL_INCDIR}" "${GENERATED_OPENCL_DIR}")
   target_link_libraries(PrEchoPlugin PRIVATE OpenCL::OpenCL)

@@ -128,7 +128,7 @@ PixelRGBA ComposeSamples_SSE2(const std::vector<TemporalSample>& samples, BlendM
         for (const TemporalSample& sample : samples)
         {
             const __m128 pixel = LoadPixel(sample.pixel);
-            const __m128 premul = PremultiplySIMD(pixel, sample.opacity);
+            const __m128 premul = PremultiplySIMD(pixel, sample.weight);
             sum = _mm_add_ps(sum, premul);
         }
 
@@ -139,11 +139,11 @@ PixelRGBA ComposeSamples_SSE2(const std::vector<TemporalSample>& samples, BlendM
 
     if (blendMode == BlendMode::Maximum || blendMode == BlendMode::Minimum)
     {
-        __m128 value = PremultiplySIMD(LoadPixel(samples.front().pixel), samples.front().opacity);
+        __m128 value = PremultiplySIMD(LoadPixel(samples.front().pixel), samples.front().weight);
 
         for (std::size_t index = 1; index < samples.size(); ++index)
         {
-            const __m128 premul = PremultiplySIMD(LoadPixel(samples[index].pixel), samples[index].opacity);
+            const __m128 premul = PremultiplySIMD(LoadPixel(samples[index].pixel), samples[index].weight);
             if (blendMode == BlendMode::Maximum)
             {
                 value = _mm_max_ps(value, premul);
@@ -164,7 +164,7 @@ PixelRGBA ComposeSamples_SSE2(const std::vector<TemporalSample>& samples, BlendM
 
     for (const TemporalSample& sample : samples)
     {
-        const __m128 premul = PremultiplySIMD(LoadPixel(sample.pixel), sample.opacity);
+        const __m128 premul = PremultiplySIMD(LoadPixel(sample.pixel), sample.weight);
         if (blendMode == BlendMode::BlendNewOnBottom)
         {
             composed = OverSIMD(composed, premul);

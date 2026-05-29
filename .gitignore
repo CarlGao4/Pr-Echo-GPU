@@ -3,3 +3,6 @@ build
 .vs
 *.rr
 *.rcp
+*.prproj
+*.aex
+*.mp4

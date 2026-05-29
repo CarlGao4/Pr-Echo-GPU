@@ -124,7 +124,7 @@ PixelRGBA_2 ComposeTwoSamplesAVX2(
         for (std::size_t i = 0; i < count; ++i)
         {
             const __m256 px = LoadTwoPixels(samples0[i].pixel, samples1[i].pixel);
-            sum = _mm256_add_ps(sum, PremultiplySIMD_2(px, samples0[i].opacity));
+            sum = _mm256_add_ps(sum, PremultiplySIMD_2(px, samples0[i].weight));
         }
 
         PixelRGBA_2 result;
@@ -136,13 +136,13 @@ PixelRGBA_2 ComposeTwoSamplesAVX2(
     {
         __m256 value = PremultiplySIMD_2(
             LoadTwoPixels(samples0[0].pixel, samples1[0].pixel),
-            samples0[0].opacity);
+            samples0[0].weight);
 
         for (std::size_t i = 1; i < count; ++i)
         {
             const __m256 premul = PremultiplySIMD_2(
                 LoadTwoPixels(samples0[i].pixel, samples1[i].pixel),
-                samples0[i].opacity);
+                samples0[i].weight);
 
             if (blendMode == BlendMode::Maximum)
             {
@@ -166,7 +166,7 @@ PixelRGBA_2 ComposeTwoSamplesAVX2(
     {
         const __m256 premul = PremultiplySIMD_2(
             LoadTwoPixels(samples0[i].pixel, samples1[i].pixel),
-            samples0[i].opacity);
+            samples0[i].weight);
 
         if (blendMode == BlendMode::BlendNewOnBottom)
         {

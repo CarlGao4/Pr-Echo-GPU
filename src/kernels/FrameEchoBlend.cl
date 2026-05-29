@@ -293,8 +293,6 @@ static inline float4 BlendSamplesOCL(
 // the output is also float4.  Format conversion happens on the CPU host side.
 // ============================================================================
 
-# if GF_DEVICE_TARGET_DEVICE
-
 // -----------------------------------------------------------------------
 // Float32/16 hybrid kernel (via ReadFloat4/WriteFloat4 from KernelMemory.h)
 // When inIs16Bit=0:  all data is float4 (32f path) - direct access
@@ -345,13 +343,10 @@ GF_KERNEL_FUNCTION(FrameEchoBlendKernel,
     }
 }
 
-# endif // GF_DEVICE_TARGET_DEVICE
-
 // ============================================================================
-// Path 2: Standalone OpenCL entry point (compiled directly as .cl)
+// Path 2: Standalone OpenCL entry point (always compiled)
+// Used by Ae GPU path. Supports all pixel formats via inPixelFormat.
 // ============================================================================
-
-# ifndef GF_DEVICE_TARGET_DEVICE
 
 __kernel void FrameEchoBlend_OCL(
     __global uchar* ioImage,
@@ -382,7 +377,5 @@ __kernel void FrameEchoBlend_OCL(
 
     StorePixelRGBAOCL(ioImage, rowByteOff, result, inPixelFormat);
 }
-
-# endif // !GF_DEVICE_TARGET_DEVICE
 
 #endif // FRAME_ECHO_BLEND_CL

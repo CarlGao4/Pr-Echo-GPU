@@ -80,7 +80,7 @@ struct alignas(64) PixelRGBA_4
 struct TemporalSample
 {
     PixelRGBA pixel;
-    float opacity = 1.0f;
+    float weight = 1.0f;
 };
 
 struct TemporalSettings
@@ -115,8 +115,8 @@ std::vector<float> BuildDirectionalWeights(
     float falloffRatio,
     WindowFalloffMapping mapping,
     float maxOpacity);
-float GetCurrentFrameOpacity(const TemporalSettings& settings);
-PixelRGBA Premultiply(const PixelRGBA& pixel, float opacity);
+float GetCurrentFrameWeight(const TemporalSettings& settings);
+PixelRGBA Premultiply(const PixelRGBA& pixel, float weight);
 PixelRGBA Unpremultiply(const PixelRGBA& pixel);
 PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode blendMode);
 
@@ -128,7 +128,7 @@ PixelRGBA ComposeSamples_AVX2(const std::vector<TemporalSample>& samples, BlendM
 
 // AVX2 batch: composes two pixels' sample sets simultaneously using 256-bit intrinsics.
 // samples0 and samples1 must have the same size; corresponding entries share the same
-// opacity/weight (only pixel values differ between the two vectors).
+// weight (only pixel values differ between the two vectors).
 PixelRGBA_2 ComposeTwoSamplesAVX2(
     const std::vector<TemporalSample>& samples0,
     const std::vector<TemporalSample>& samples1,

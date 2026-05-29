@@ -185,7 +185,7 @@ std::vector<float> BuildDirectionalWeights(
     return weights;
 }
 
-float GetCurrentFrameOpacity(const TemporalSettings& settings)
+float GetCurrentFrameWeight(const TemporalSettings& settings)
 {
     const float forward = Clamp01(settings.forwardMaxOpacity);
     const float backward = Clamp01(settings.backwardMaxOpacity);
@@ -193,9 +193,9 @@ float GetCurrentFrameOpacity(const TemporalSettings& settings)
     return 0.5f * (forward + backward);
 }
 
-PixelRGBA Premultiply(const PixelRGBA& pixel, float opacity)
+PixelRGBA Premultiply(const PixelRGBA& pixel, float weight)
 {
-    const float alpha = Clamp01(pixel.a * opacity);
+    const float alpha = Clamp01(pixel.a * weight);
     return PixelRGBA{
         pixel.r * alpha,
         pixel.g * alpha,
@@ -251,7 +251,7 @@ PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode b
         PixelRGBA sum{};
         for (const TemporalSample& sample : samples)
         {
-            const PixelRGBA premultiplied = Premultiply(sample.pixel, sample.opacity);
+            const PixelRGBA premultiplied = Premultiply(sample.pixel, sample.weight);
             sum.r += premultiplied.r;
             sum.g += premultiplied.g;
             sum.b += premultiplied.b;
@@ -263,10 +263,10 @@ PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode b
 
     if (blendMode == BlendMode::Maximum || blendMode == BlendMode::Minimum)
     {
-        PixelRGBA value = Premultiply(samples.front().pixel, samples.front().opacity);
+        PixelRGBA value = Premultiply(samples.front().pixel, samples.front().weight);
         for (std::size_t index = 1; index < samples.size(); ++index)
         {
-            const PixelRGBA premultiplied = Premultiply(samples[index].pixel, samples[index].opacity);
+            const PixelRGBA premultiplied = Premultiply(samples[index].pixel, samples[index].weight);
             if (blendMode == BlendMode::Maximum)
             {
                 value.r = std::max(value.r, premultiplied.r);
@@ -290,8 +290,8 @@ PixelRGBA ComposeSamples(const std::vector<TemporalSample>& samples, BlendMode b
     for (const TemporalSample& sample : samples)
     {
         composed = blendMode == BlendMode::BlendNewOnBottom ?
-            Over(Premultiply(sample.pixel, sample.opacity), composed):
-            Over(composed, Premultiply(sample.pixel, sample.opacity));
+            Over(Premultiply(sample.pixel, sample.weight), composed):
+            Over(composed, Premultiply(sample.pixel, sample.weight));
     }
 
     return Unpremultiply(composed);

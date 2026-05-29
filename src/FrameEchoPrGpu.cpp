@@ -104,8 +104,10 @@ static int BlendModeToKernelEnum(frame_echo::BlendMode mode)
 // ============================================================================
 enum { kMaxDevices = 12 };
 
+#ifdef GPU_ENABLE_OPENCL
 // OpenCL
 static cl_kernel sOpenCLKernelCache[kMaxDevices] = {};
+#endif
 
 // DirectX
 #ifdef GPU_ENABLE_DIRECTX
@@ -120,7 +122,11 @@ namespace frame_echo
 class FrameEchoGPU : public PrGPUFilterBase
 {
 public:
-    FrameEchoGPU() : mCLKernel(nullptr), mSupportsFloat16(false) {}
+    FrameEchoGPU() :
+#ifdef GPU_ENABLE_OPENCL
+        mCLKernel(nullptr)
+#endif
+    {}
     ~FrameEchoGPU() override = default;
 
     // -------- Static interface --------
@@ -137,12 +143,14 @@ public:
         PrGPUFilterBase::Initialize(ioInstanceData);
         if (mDeviceIndex >= kMaxDevices) return suiteError_Fail;
 
-        mSupportsFloat16 = DetectFloat16Support();
-
+        DetectFloat16Support();
+#ifdef GPU_ENABLE_OPENCL
         if (mDeviceInfo.outDeviceFramework == PrGPUDeviceFramework_OpenCL)
         {
-            return InitOpenCL();
+            prSuiteError err = InitOpenCL();
+            return err;
         }
+#endif
 #ifdef GPU_ENABLE_DIRECTX
         else if (mDeviceInfo.outDeviceFramework == PrGPUDeviceFramework_DirectX)
         {
@@ -159,10 +167,12 @@ public:
     }
 
 private:
-    bool mSupportsFloat16;
+    bool mSupportsFloat16_OpenCL = false;
+    bool mSupportsFloat16_CUDA = false;
+    bool mSupportsFloat16_DirectX = false;
 
     // Detect whether the GPU device supports native float16 compute.
-    bool DetectFloat16Support()
+    void DetectFloat16Support()
     {
         if (mDeviceInfo.outDeviceFramework == PrGPUDeviceFramework_OpenCL)
         {
@@ -171,16 +181,16 @@ private:
             // Check for cl_khr_fp16 extension via extension string query
             size_t extSize = 0;
             cl_int res = clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, 0, nullptr, &extSize);
-            if (res != CL_SUCCESS || extSize == 0) return false;
+            if (res != CL_SUCCESS || extSize == 0) return;
 
             std::string extensions(extSize, '\0');
             res = clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, extSize, &extensions[0], nullptr);
-            if (res != CL_SUCCESS) return false;
+            if (res != CL_SUCCESS) return;
 
             // Search for cl_khr_fp16 in the semicolon-separated extension list
-            return extensions.find("cl_khr_fp16") != std::string::npos;
+            mSupportsFloat16_OpenCL = extensions.find("cl_khr_fp16") != std::string::npos;
 #else
-            return false;
+            return;
 #endif
         }
 #ifdef GPU_ENABLE_CUDA
@@ -191,7 +201,7 @@ private:
             CUresult res = cuDeviceGetAttribute(&ccMajor,
                 CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice);
             // Native half throughput requires CC >= 6.0 (Pascal+)
-            return (res == CUDA_SUCCESS && ccMajor >= 6);
+            mSupportsFloat16_CUDA = (res == CUDA_SUCCESS && ccMajor >= 6);
         }
 #endif
 #ifdef GPU_ENABLE_DIRECTX
@@ -199,21 +209,23 @@ private:
         {
             // DirectX with -enable-16bit-types and Shader Model 6.2+ supports
             // native half (min16float). Assume supported on modern GPUs.
-            return true;
+            mSupportsFloat16_DirectX = true;
+            return;
         }
 #endif
-        return false;
+        return;
     }
 
+#ifdef GPU_ENABLE_OPENCL
     prSuiteError InitOpenCL()
     {
         mCLKernel = sOpenCLKernelCache[mDeviceIndex];
         if (!mCLKernel)
         {
             cl_int result = CL_SUCCESS;
-            const char* k16fString = "#define GF_OPENCL_SUPPORTS_16F 1\n";
-            size_t sizes[] = { strlen(k16fString), strlen(kFrameEchoBlend_OpenCLString) };
-            const char* strings[] = { k16fString, kFrameEchoBlend_OpenCLString };
+            const char* k16fString = mSupportsFloat16_OpenCL ? "#define GF_OPENCL_SUPPORTS_16F 1\n" : "#define GF_OPENCL_SUPPORTS_16F 0\n";
+            size_t sizes[] = { strlen(k16fString), kFrameEchoBlend_OpenCLString_Size };
+            const char* strings[] = { k16fString, reinterpret_cast<const char*>(kFrameEchoBlend_OpenCLString) };
             cl_context context = (cl_context)mDeviceInfo.outContextHandle;
             cl_device_id device = (cl_device_id)mDeviceInfo.outDeviceHandle;
 
@@ -232,6 +244,7 @@ private:
         }
         return suiteError_NoError;
     }
+#endif // GPU_ENABLE_OPENCL
 
 #ifdef GPU_ENABLE_DIRECTX
     prSuiteError InitDirectX()
@@ -441,7 +454,7 @@ public:
         // ---- Build opacities in chronological order ----
         // Chronological slots: [farthest_bwd ... nearest_bwd, current, nearest_fwd ... farthest_fwd]
         std::vector<float> opacities(numSamples);
-        opacities[nb] = GetCurrentFrameOpacity(s);
+        opacities[nb] = GetCurrentFrameWeight(s);
         for (int i = 0; i < nb; ++i)
         {
             int slot = i;
@@ -459,6 +472,7 @@ public:
         mGPUDeviceSuite->GetGPUPPixData(*outFrame, &outData);
         if (!outData) return suiteError_Fail;
 
+#ifdef GPU_ENABLE_OPENCL
         // ---- Build consolidated samples buffer and dispatch ----
         if (mDeviceInfo.outDeviceFramework == PrGPUDeviceFramework_OpenCL)
         {
@@ -466,6 +480,7 @@ public:
                 opacities, numSamples, elementPitch, w, h, sampleImgSize,
                 s, nb, nf, validBackward, validForward, is16f);
         }
+#endif
 #ifdef GPU_ENABLE_DIRECTX
         else if (mDeviceInfo.outDeviceFramework == PrGPUDeviceFramework_DirectX)
         {
@@ -479,7 +494,7 @@ public:
 #ifdef GPU_ENABLE_CUDA
         else if (mDeviceInfo.outDeviceFramework == PrGPUDeviceFramework_CUDA)
         {
-            if (is16f && mSupportsFloat16)
+            if (is16f && mSupportsFloat16_CUDA)
             {
                 return RenderCUDA_Half_Ordered(outData, inFrames, inFrameCount,
                     opacities, numSamples, elementPitch, w, h, sampleImgSize,
@@ -534,7 +549,7 @@ private:
         size_t sampleByteSize = sampleImgSize * elementSize;
         size_t totalBytes   = (size_t)numSamples * sampleByteSize;
 
-        cl_mem samplesBuf = clCreateBuffer(ctx, CL_MEM_READ_ONLY, totalBytes, nullptr, &res);
+        cl_mem samplesBuf = clCreateBuffer(ctx, CL_MEM_READ_WRITE, totalBytes, nullptr, &res);
         if (res != CL_SUCCESS) return suiteError_Fail;
 
         // ---- Pre-fill all non-current slots with shortage pattern ----
@@ -596,7 +611,7 @@ private:
             {
                 if (s == nb) continue;
                 size_t off = (size_t)s * sampleByteSize;
-                res = clEnqueueWriteBuffer(cq, samplesBuf, CL_FALSE, off,
+                res = clEnqueueWriteBuffer(cq, samplesBuf, CL_TRUE, off,
                                            sampleByteSize, fillBuf.data(), 0, nullptr, nullptr);
                 if (res != CL_SUCCESS) { clReleaseMemObject(samplesBuf); return suiteError_Fail; }
             }
@@ -684,9 +699,9 @@ private:
 
         // Opacities buffer
         size_t opBytes = (size_t)numSamples * sizeof(float);
-        cl_mem opBuf = clCreateBuffer(ctx, CL_MEM_READ_ONLY, opBytes, nullptr, &res);
+        cl_mem opBuf = clCreateBuffer(ctx, CL_MEM_READ_WRITE, opBytes, nullptr, &res);
         if (res != CL_SUCCESS) { clReleaseMemObject(samplesBuf); return suiteError_Fail; }
-        clEnqueueWriteBuffer(cq, opBuf, CL_FALSE, 0, opBytes, opacities.data(), 0, nullptr, nullptr);
+        clEnqueueWriteBuffer(cq, opBuf, CL_TRUE, 0, opBytes, opacities.data(), 0, nullptr, nullptr);
 
         // Set kernel args
         cl_mem outMem = (cl_mem)outData;
@@ -1069,8 +1084,8 @@ private:
 #ifdef GPU_ENABLE_DIRECTX
     // ---- DirectX Render (chronological order) ----
     // NOTE: Premiere Pro does not currently support DirectX GPU filters.
-    // The consolidated sample buffer logic (pre-fill shortage pattern →
-    // overwrite valid frames → Repeat post-fill) mirrors OpenCL/CUDA paths.
+    // The consolidated sample buffer logic (pre-fill shortage pattern ->
+    // overwrite valid frames -> Repeat post-fill) mirrors OpenCL/CUDA paths.
     // When Pr adds DirectX support, enable this block by:
     //   1. Verifying the DXShaderExecution API (SetParamBuffer / SetUAV / SRV)
     //   2. Adding proper D3D12 buffer creation for consolidatedSamples
@@ -1095,7 +1110,9 @@ private:
     }
 #endif
 
+#ifdef GPU_ENABLE_OPENCL
     cl_kernel mCLKernel;
+#endif
 };
 
 } // namespace frame_echo

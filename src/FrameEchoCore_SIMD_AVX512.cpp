@@ -143,7 +143,7 @@ PixelRGBA_4 ComposeFourSamplesAVX512(
             const __m512 px = LoadFourPixels(
                 samples0[i].pixel, samples1[i].pixel,
                 samples2[i].pixel, samples3[i].pixel);
-            sum = _mm512_add_ps(sum, PremultiplySIMD_4(px, samples0[i].opacity));
+            sum = _mm512_add_ps(sum, PremultiplySIMD_4(px, samples0[i].weight));
         }
 
         PixelRGBA_4 result;
@@ -156,14 +156,14 @@ PixelRGBA_4 ComposeFourSamplesAVX512(
         __m512 value = PremultiplySIMD_4(
             LoadFourPixels(samples0[0].pixel, samples1[0].pixel,
                            samples2[0].pixel, samples3[0].pixel),
-            samples0[0].opacity);
+            samples0[0].weight);
 
         for (std::size_t i = 1; i < count; ++i)
         {
             const __m512 premul = PremultiplySIMD_4(
                 LoadFourPixels(samples0[i].pixel, samples1[i].pixel,
                                samples2[i].pixel, samples3[i].pixel),
-                samples0[i].opacity);
+                samples0[i].weight);
 
             if (blendMode == BlendMode::Maximum)
             {
@@ -188,7 +188,7 @@ PixelRGBA_4 ComposeFourSamplesAVX512(
         const __m512 premul = PremultiplySIMD_4(
             LoadFourPixels(samples0[i].pixel, samples1[i].pixel,
                            samples2[i].pixel, samples3[i].pixel),
-            samples0[i].opacity);
+            samples0[i].weight);
 
         if (blendMode == BlendMode::BlendNewOnBottom)
         {

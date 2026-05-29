@@ -1,3 +1,7 @@
+// Copyright (c) 2026 CarlGao4
+// Licensed under the MIT License. See LICENSE for details.
+// github.com/CarlGao4/Pr-Echo-GPU
+
 //=============================================================================
 // FrameEchoBlend.cl - OpenCL Kernel
 //

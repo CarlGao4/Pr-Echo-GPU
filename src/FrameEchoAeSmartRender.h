@@ -1,5 +1,9 @@
+// Copyright (c) 2026 CarlGao4
+// Licensed under the MIT License. See LICENSE for details.
+// github.com/CarlGao4/Pr-Echo-GPU
+
 //=============================================================================
-// FrameEchoAeGpu.h - After Effects Smart Render GPU support for FrameEcho
+// FrameEchoAeSmartRender.h - After Effects Smart Render GPU support for FrameEcho
 //
 // Declares:
 //   AePreRenderData  - data passed from PreRender to SmartRender

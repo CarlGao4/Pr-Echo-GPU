@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CarlGao4
+# Licensed under the MIT License. See LICENSE for details.
+# github.com/CarlGao4/Pr-Echo-GPU
+
 """
 bin2h.py - Convert a binary file into a C header with
     unsigned char const kName[] = { ... };

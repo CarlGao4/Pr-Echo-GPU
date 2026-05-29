@@ -1,3 +1,7 @@
+// Copyright (c) 2026 CarlGao4
+// Licensed under the MIT License. See LICENSE for details.
+// github.com/CarlGao4/Pr-Echo-GPU
+
 #include "AEConfig.h"
 #include "AE_EffectVers.h"
 
@@ -34,7 +38,7 @@ resource 'PiPL' (16000) {
         },
         /* [7] */
         AE_Effect_Version {
-            0x80000
+            0x80600
         },
         /* [8] */
         AE_Effect_Info_Flags {

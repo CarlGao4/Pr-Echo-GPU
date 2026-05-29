@@ -1,3 +1,7 @@
+// Copyright (c) 2026 CarlGao4
+// Licensed under the MIT License. See LICENSE for details.
+// github.com/CarlGao4/Pr-Echo-GPU
+
 #include "FrameEchoCore.h"
 #include "FrameEchoParams.h"
 
@@ -152,6 +156,20 @@ static PF_Err RefreshParamUI(
     return err;
 }
 
+static PF_Err About(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_ParamDef* params[],
+    PF_LayerDef* output)
+{
+    PF_SPRINTF(out_data->return_msg,
+        "Frame Echo, v%d.%d.%d\n"
+        "by CarlGao4\n\n"
+        "Source code: github.com/CarlGao4/Pr-Echo-GPU",
+        1, 0, 0);
+    return PF_Err_NONE;
+}
+
 static PF_Err GlobalSetup(
     PF_InData* in_data,
     PF_OutData* out_data,
@@ -161,7 +179,7 @@ static PF_Err GlobalSetup(
     // Detect CPU features (SSE4.2, AVX2, AVX-512) at startup
     frame_echo::DetectCPUFeatures();
 
-    out_data->my_version = PF_VERSION(1, 0, 0, PF_Stage_DEVELOP, 0);
+    out_data->my_version = PF_VERSION(1, 0, 0, PF_Stage_RELEASE, 0);
     out_data->out_flags |= PF_OutFlag_DEEP_COLOR_AWARE;
     out_data->out_flags |= PF_OutFlag_WIDE_TIME_INPUT;
     out_data->out_flags |= PF_OutFlag_NON_PARAM_VARY;
@@ -1390,6 +1408,9 @@ extern "C" DllExport PF_Err EffectMain(
 
     switch (inCmd)
     {
+    case PF_Cmd_ABOUT:
+        err = About(in_data, out_data, params, inOutput);
+        break;
     case PF_Cmd_GLOBAL_SETUP:
         err = GlobalSetup(in_data, out_data, params, inOutput);
         break;
